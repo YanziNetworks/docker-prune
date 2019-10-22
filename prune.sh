@@ -312,7 +312,7 @@ if echo "$RESOURCES" | grep -qo "container"; then
                     verbose "  Would remove container $(yellow "$cnr")"
                 else
                     verbose "  Removing exited container $(red "$cnr")"
-                    docker image rm -f "${img}"
+                    docker container rm -f "${img}"
                 fi
             else
                 verbose "  Keeping container $(green "$cnr")"
