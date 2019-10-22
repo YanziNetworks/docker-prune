@@ -66,7 +66,7 @@ while [ $# -gt 0 ]; do
 
     -n | --names)
         NAMES="$2"; shift 2;;
-    --limit=*)
+    --names=*)
         NAMES="${1#*=}"; shift 1;;
 
     -x | --exclude)
@@ -157,52 +157,52 @@ abort() {
 
 
 howlong() {
-    if [ -n "$(echo "$1"|grep -E '[0-9]+[[:space:]]*[yY]')" ]; then
+    if echo "$1"|grep -Eqo '[0-9]+[[:space:]]*[yY]'; then
         len=$(echo "$1"  | sed -En 's/([0-9]+)[[:space:]]*[yY].*/\1/p')
         expr "$len" \* 31536000
         return
     fi
-    if [ -n "$(echo "$1"|grep -E '[0-9]+[[:space:]]*[Mm][Oo]')" ]; then
+    if echo "$1"|grep -Eqo '[0-9]+[[:space:]]*[Mm][Oo]'; then
         len=$(echo "$1"  | sed -En 's/([0-9]+)[[:space:]]*[Mm][Oo].*/\1/p')
         expr "$len" \* 2592000
         return
     fi
-    if [ -n "$(echo "$1"|grep -E '[0-9]+[[:space:]]*m')" ]; then
+    if echo "$1"|grep -Eqo '[0-9]+[[:space:]]*m'; then
         len=$(echo "$1"  | sed -En 's/([0-9]+)[[:space:]]*m.*/\1/p')
         expr "$len" \* 2592000
         return
     fi
-    if [ -n "$(echo "$1"|grep -E '[0-9]+[[:space:]]*[Ww]')" ]; then
+    if echo "$1"|grep -Eqo '[0-9]+[[:space:]]*[Ww]'; then
         len=$(echo "$1"  | sed -En 's/([0-9]+)[[:space:]]*[Ww].*/\1/p')
         expr "$len" \* 604800
         return
     fi
-    if [ -n "$(echo "$1"|grep -E '[0-9]+[[:space:]]*[Dd]')" ]; then
+    if echo "$1"|grep -Eqo '[0-9]+[[:space:]]*[Dd]'; then
         len=$(echo "$1"  | sed -En 's/([0-9]+)[[:space:]]*[Dd].*/\1/p')
         expr "$len" \* 86400
         return
     fi
-    if [ -n "$(echo "$1"|grep -E '[0-9]+[[:space:]]*[Hh]')" ]; then
+    if echo "$1"|grep -Eqo '[0-9]+[[:space:]]*[Hh]'; then
         len=$(echo "$1"  | sed -En 's/([0-9]+)[[:space:]]*[Hh].*/\1/p')
         expr "$len" \* 3600
         return
     fi
-    if [ -n "$(echo "$1"|grep -E '[0-9]+[[:space:]]*[Mm][Ii]')" ]; then
+    if echo "$1"|grep -Eqo '[0-9]+[[:space:]]*[Mm][Ii]'; then
         len=$(echo "$1"  | sed -En 's/([0-9]+)[[:space:]]*[Mm][Ii].*/\1/p')
         expr "$len" \* 60
         return
     fi
-    if [ -n "$(echo "$1"|grep -E '[0-9]+[[:space:]]*M')" ]; then
+    if echo "$1"|grep -Eqo '[0-9]+[[:space:]]*M'; then
         len=$(echo "$1"  | sed -En 's/([0-9]+)[[:space:]]*M.*/\1/p')
         expr "$len" \* 60
         return
     fi
-    if [ -n "$(echo "$1"|grep -E '[0-9]+[[:space:]]*[Ss]')" ]; then
+    if echo "$1"|grep -Eqo '[0-9]+[[:space:]]*[Ss]'; then
         len=$(echo "$1"  | sed -En 's/([0-9]+)[[:space:]]*[Ss].*/\1/p')
         echo "$len"
         return
     fi
-    if [ -n "$(echo "$1"|grep -E '[0-9]+')" ]; then
+    if echo "$1"|grep -E '[0-9]+'; then
         echo "$1"
         return
     fi
@@ -242,14 +242,18 @@ iso8601() {
     ds=$(echo "$1"|sed -E 's/([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.([0-9]{3,9}))?([+-]([0-9]{2}):([0-9]{2})|Z)?/\8/')
     ns=0
     if [ -n "$ds" ]; then
-        if [ "$(echo "$ds"|wc -c)" = "10" ]; then
+        if [ "${#ds}" = "10" ]; then
+            ds=$(echo "$ds" | sed 's/^0*//')
             ns=$ds
-        elif [ "$(echo "$ds"|wc -c)" = "7" ]; then
-            ns=$(expr 1000 "*" "$ds")
+        elif [ "${#ds}" = "7" ]; then
+            ds=$(echo "$ds" | sed 's/^0*//')
+            ns=$((1000*ds))
         else
-            ns=$(expr 1000000 "*" "$ds")
+            ds=$(echo "$ds" | sed 's/^0*//')
+            ns=$((1000000*ds))
         fi
     fi
+
 
     # Arrange for tzdiff to be the number of seconds for the timezone.
     tz=$(echo "$1"|sed -E 's/([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.([0-9]{3,9}))?([+-]([0-9]{2}):([0-9]{2})|Z)?/\9/')
@@ -261,9 +265,9 @@ iso8601() {
             hrs=$(printf "%d" "$(echo "$tz" | sed -E 's/[+-]([0-9]{2}):([0-9]{2})/\1/')")
             mns=$(printf "%d" "$(echo "$tz" | sed -E 's/[+-]([0-9]{2}):([0-9]{2})/\2/')")
             sign=$(echo "$tz" | sed -E 's/([+-])([0-9]{2}):([0-9]{2})/\1/')
-            secs=$(expr "$hrs" "*" 3600 + "$mns" "*" 60 )
+            secs=$((hrs*3600+mns*60))
             if [ "$sign" = "-" ]; then
-                tzdiff=$(expr -"$secs")
+                tzdiff=$((-secs))
             else
                 tzdiff=$secs
             fi
@@ -300,18 +304,18 @@ if echo "$RESOURCES" | grep -qo "container"; then
                 verbose "  Considering exited container $cnr for removal, matching $NAMES but not $EXCLUDE"
                 CONSIDER=1
             else
-                verbose "  Skipping removal of container $(green $cnr), matching $NAMES but also matching $EXCLUDE"
+                verbose "  Skipping removal of container $(green "$cnr"), matching $NAMES but also matching $EXCLUDE"
             fi
 
             if [ "$CONSIDER" = "1" ]; then
                 if [ "$DRYRUN" = "1" ]; then
-                    verbose "  Would remove container $(yellow $cnr)"
+                    verbose "  Would remove container $(yellow "$cnr")"
                 else
-                    verbose "  Removing exited container $(red $cnr)"
+                    verbose "  Removing exited container $(red "$cnr")"
                     docker image rm -f "${img}"
                 fi
             else
-                verbose "  Keeping container $(green $cnr)"
+                verbose "  Keeping container $(green "$cnr")"
             fi
         fi
     done
@@ -332,7 +336,7 @@ if echo "$RESOURCES" | grep -qo "volume"; then
                 verbose "  Counting files in dangling volume: $vol, matching $NAMES but not $EXCLUDE"
                 CONSIDER=1
             else
-                verbose "  Skipping dangling volume: $(green $vol), matching $NAMES but also matching $EXCLUDE"
+                verbose "  Skipping dangling volume: $(green "$vol"), matching $NAMES but also matching $EXCLUDE"
             fi
         fi
 
@@ -340,13 +344,13 @@ if echo "$RESOURCES" | grep -qo "volume"; then
             files=$(docker run --rm -v "${vol}":/data "$BUSYBOX" find /data -type f -xdev -print | wc -l)
             if [ "$files" -le "$MAXFILES" ]; then
                 if [ "$DRYRUN" = "1" ]; then
-                    verbose "  Would remove dangling volume $(yellow $vol) with less than $MAXFILES file(s)"
+                    verbose "  Would remove dangling volume $(yellow "$vol") with less than $MAXFILES file(s)"
                 else
-                    verbose "  Removing dangling volume $(red $vol), with less than $MAXFILES file(s)"
+                    verbose "  Removing dangling volume $(red "$vol"), with less than $MAXFILES file(s)"
                     docker volume rm -f "${vol}"
                 fi
             else
-                verbose "  Keeping dangling volume $(green $vol) with $files file(s)"
+                verbose "  Keeping dangling volume $(green "$vol") with $files file(s)"
             fi
         fi
     done
@@ -361,7 +365,7 @@ if echo "$RESOURCES" | grep -qo "image"; then
 
         CONSIDER=0
         creation=$(docker image inspect --format '{{.Created}}' "$img")
-        howold=$(expr "$now" - "$(iso8601 $creation)")
+        howold=$((now-$(iso8601 "$creation")))
         if [ -z "$tags" ] && [ -z "$digests" ]; then
             CONSIDER=1
         elif [ "$howold" -ge "$AGE" ]; then
@@ -370,13 +374,13 @@ if echo "$RESOURCES" | grep -qo "image"; then
 
         if [ "$CONSIDER" = "1" ]; then
             if [ "$DRYRUN" = "1" ]; then
-                verbose "  Would remove dangling image $(yellow $img) (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human $howold)old"
+                verbose "  Would remove dangling image $(yellow "$img") (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human "$howold")old"
             else
-                verbose "  Removing dangling volume $(red $img) (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human $howold)old"
+                verbose "  Removing dangling volume $(red "$img") (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human "$howold")old"
                 docker image rm -f "${img}"
             fi
         else
-            verbose "  Keeping dangling image $(green $img), $(human $howold)old"
+            verbose "  Keeping dangling image $(green "$img"), $(human "$howold")old"
         fi
     done
 fi
