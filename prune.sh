@@ -384,3 +384,5 @@ if echo "$RESOURCES" | grep -qo "image"; then
         fi
     done
 fi
+
+verbose "Done cleaning: $RESOURCES"
