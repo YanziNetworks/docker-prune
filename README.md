@@ -35,7 +35,12 @@ can be changed for more aggressive decisions.
 
 The script accepts both short "one-letter" options, and double-dashed longer
 options. Long options can be written with an `=` sign or with their argument
-separated from the option using a space separator. The options are as follows:
+separated from the option using a space separator. The options are as described
+below. In addition, all remaining arguments will be understood as a command to
+execute once cleanup has finished, if relevant. It is possible to separate the
+options and their values, from the remaining finalising command using a double
+dash, `--`.
+
 
 ### `-v` or `--verbose`
 

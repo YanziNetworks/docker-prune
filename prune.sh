@@ -29,7 +29,7 @@ Description:
   $cmdname performs some conservative Docker system pruning
 
 Usage:
-  $cmdname [-option arg --long-option(=)arg]
+  $cmdname [-option arg --long-option(=)arg] [--] command
 
   where all dash-led options are as follows (long options can be followed by
   an equal sign):
@@ -49,6 +49,10 @@ Usage:
                      6m (== 6 months), 3 days, etc.
     --busybox        Docker busybox image tag to be used for volume content
                      collection.
+
+  Everything that follows these options, preferably separated from the options
+  using -- is any command that will be executed, if present, at the end of the
+  script.
 
 USAGE
     exit "$exitcode"
@@ -386,3 +390,8 @@ if echo "$RESOURCES" | grep -qo "image"; then
 fi
 
 verbose "Done cleaning: $RESOURCES"
+
+if [ $# -ne "0" ]; then
+    verbose "Executing $*"
+    exec "$@"
+fi
