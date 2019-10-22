@@ -6,7 +6,7 @@ In this case, you should probably first run it with the option `--dry-run` in
 order to assess what will be removed. The script also comes as Docker [image].
 
   [prune]: https://docs.docker.com/engine/reference/commandline/system_prune/
-  [image]: https://cloud.docker.com/u/yanzinetworks/repository/docker/yanzinetworks/prune  
+  [image]: https://hub.docker.com/r/yanzinetworks/prune  
 
 By default, the script will prune exited containers, dangling volumes and
 dangling images with the following twist. All defaults are conservative, they
