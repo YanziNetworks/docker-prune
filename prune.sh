@@ -376,7 +376,7 @@ if echo "$RESOURCES" | grep -qo "image"; then
             if [ "$DRYRUN" = "1" ]; then
                 verbose "  Would remove dangling image $(yellow "$img") (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human "$howold")old"
             else
-                verbose "  Removing dangling volume $(red "$img") (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human "$howold")old"
+                verbose "  Removing dangling image $(red "$img") (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human "$howold")old"
                 docker image rm -f "${img}"
             fi
         else
