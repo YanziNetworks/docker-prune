@@ -7,11 +7,11 @@ appname=${cmdname%.*}
 # All (good?) defaults
 VERBOSE=0
 DRYRUN=0
-BUSYBOX=busybox@sha256:fe301db49df08c384001ed752dff6d52b4305a73a7f608f21528048e8a08b51e
+BUSYBOX=busybox:1.31.0-musl
 MAXFILES=0
 NAMES=
 EXCLUDE=
-RESOURCES="images volumes"
+RESOURCES="images volumes containers"
 AGE=6m
 if [ -t 1 ]; then
     INTERACTIVE=1
@@ -33,8 +33,22 @@ Usage:
 
   where all dash-led options are as follows (long options can be followed by
   an equal sign):
-    -v | -verbose   Be more verbose
-    --dry(-)run     Do not remove, print out only.
+    -v | --verbose   Be more verbose
+    --dry(-)run      Do not remove, print out only.
+    -r | --resources Space separated list of Docker resources to consider for
+                     removal, defaults to "images volumes containers".
+    -l | --limit     Maximum number of files in a dangling volume to consider
+                     it "empty" and consider it for removal (default: 0)
+    -n | --names     Regular expression matching names of dangling volumes and
+                     exited containers to consider for removal (default: empty,
+                     e.g. all)
+    -x | --exclude   Regular expression to exclude from names selected above,
+                     this eases selecting away important containers/volumes.
+    -a | --age       Age of dangling image to consider it for removal (default:
+                     6m). The age can be expressed in human-readable format, e.g.
+                     6m (== 6 months), 3 days, etc.
+    --busybox        Docker busybox image tag to be used for volume content
+                     collection.
 
 USAGE
     exit "$exitcode"
@@ -70,8 +84,16 @@ while [ $# -gt 0 ]; do
     --age=*)
         AGE="${1#*=}"; shift 1;;
 
+    --busybox)
+        BUSYBOX="$2"; shift 2;;
+    --busybox=*)
+        BUSYBOX="${1#*=}"; shift 1;;
+
     --dry-run | --dryrun)
         DRYRUN=1; shift 1;;
+
+    -h | --help)
+        usage 1; exit;;
 
     --)
         shift; break;;
@@ -264,6 +286,35 @@ if echo "$AGE"|grep -Eq '[0-9]+[[:space:]]*[A-Za-z]+'; then
     NEWAGE=$(howlong "$AGE")
     verbose "Converting human-readable age $AGE to $NEWAGE seconds"
     AGE=$NEWAGE
+fi
+
+if echo "$RESOURCES" | grep -qo "container"; then
+    verbose "Cleaning up exited containers..."
+    for cnr in $(docker container ls --filter status=exited --format '{{.Names}}'); do
+        CONSIDER=0
+        if [ -n "$NAMES" ] && echo "$cnr"|grep -Eqo "$NAMES"; then
+            if [ -z "$EXCLUDE" ]; then
+                verbose "  Considering exited container $cnr for removal, matching $NAMES"
+                CONSIDER=1
+            elif [ -n "$EXCLUDE" ] && echo "$cnr"|grep -Eqov "$EXCLUDE"; then
+                verbose "  Considering exited container $cnr for removal, matching $NAMES but not $EXCLUDE"
+                CONSIDER=1
+            else
+                verbose "  Skipping removal of container $(green $cnr), matching $NAMES but also matching $EXCLUDE"
+            fi
+
+            if [ "$CONSIDER" = "1" ]; then
+                if [ "$DRYRUN" = "1" ]; then
+                    verbose "  Would remove container $(yellow $cnr)"
+                else
+                    verbose "  Removing exited container $(red $cnr)"
+                    docker image rm -f "${img}"
+                fi
+            else
+                verbose "  Keeping container $(green $cnr)"
+            fi
+        fi
+    done
 fi
 
 if echo "$RESOURCES" | grep -qo "volume"; then
