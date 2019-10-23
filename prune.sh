@@ -13,6 +13,7 @@ NAMES=
 EXCLUDE=
 RESOURCES="images volumes containers"
 AGE=6m
+NAMESGEN=https://raw.githubusercontent.com/moby/moby/master/pkg/namesgenerator/names-generator.go
 if [ -t 1 ]; then
     INTERACTIVE=1
 else
@@ -49,6 +50,8 @@ Usage:
                      6m (== 6 months), 3 days, etc.
     --busybox        Docker busybox image tag to be used for volume content
                      collection.
+    --namesgen       URL to go implementation for Docker container names
+                     generator, defaults to latest at Moby GitHub project.
 
   Everything that follows these options, preferably separated from the options
   using -- is any command that will be executed, if present, at the end of the
@@ -95,6 +98,11 @@ while [ $# -gt 0 ]; do
 
     --dry-run | --dryrun)
         DRYRUN=1; shift 1;;
+
+    --names-gen | --names-generator | --namesgen)
+        NAMESGEN="$2"; shift 2;;
+    --names-gen=* | --names-generator=* | --namesgen=*)
+        NAMESGEN="${1#*=}"; shift 1;;
 
     -h | --help)
         usage 1; exit;;
@@ -319,10 +327,42 @@ if echo "$AGE"|grep -Eq '[0-9]+[[:space:]]*[A-Za-z]+'; then
     AGE=$NEWAGE
 fi
 
+NAMES_DICTIONARY=
+if [ -n "$NAMESGEN" ]; then
+    verbose "Reading random container names database from $NAMESGEN"
+    if [ -x "$(command -v curl)" ]; then
+        NAMES_DICTIONARY=$(curl -qsSL -o- "$NAMESGEN"|grep -E '^\s*\"(\w+)\",'|sed -Ee 's/^\s*\"(\w+)\",/\1/g')
+    elif [ -x "$(command -v wget)" ]; then
+        NAMES_DICTIONARY=$(wget -q -O- "$NAMESGEN"|grep -E '^\s*\"(\w+)\",'|sed -Ee 's/^\s*\"(\w+)\",/\1/g')
+    else
+        warn "Cannot load container name dictionary, neither curl, nor wget available"
+    fi
+fi
+
 if echo "$RESOURCES" | grep -qo "container"; then
     verbose "Cleaning up exited containers..."
     for cnr in $(docker container ls -a --filter status=exited --filter status=dead --format '{{.Names}}'); do
-        if [ "$(consider "$cnr" container)" = "1" ]; then
+        CONSIDER=0
+        # Try matching the name of the container against the latest list of names
+        # used by Docker to generate good random names.
+        if echo "$cnr" | grep -Eqo '\w+_\w+'; then
+            if [ -n "$NAMES_DICTIONARY" ]; then
+                left=$(echo "$cnr" | sed -E 's/(\w+)_(\w+)/\1/')
+                right=$(echo "$cnr" | sed -E 's/(\w+)_(\w+)/\2/')
+                if echo "$NAMES_DICTIONARY" | grep -qo "$left" && echo "$NAMES_DICTIONARY" | grep -qo "$right"; then
+                    verbose "  Container $cnr has an automatically generated considering it for removal"
+                    CONSIDER=1
+                fi
+            else
+                verbose "  Container $cnd could be a generated one, but no names dictionary to detect"
+            fi
+        fi
+
+        if [ "$CONSIDER" = "0" ]; then
+            CONSIDER=$(consider "$cnr" container)
+        fi
+
+        if [ "$CONSIDER" = "1" ]; then
             if [ "$DRYRUN" = "1" ]; then
                 verbose "  Would remove container $(yellow "$cnr")"
             else
