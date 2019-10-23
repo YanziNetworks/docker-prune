@@ -321,13 +321,13 @@ fi
 
 if echo "$RESOURCES" | grep -qo "container"; then
     verbose "Cleaning up exited containers..."
-    for cnr in $(docker container ls --filter status=exited --format '{{.Names}}'); do
+    for cnr in $(docker container ls -a --filter status=exited --filter status=dead --format '{{.Names}}'); do
         if [ "$(consider "$cnr" container)" = "1" ]; then
             if [ "$DRYRUN" = "1" ]; then
                 verbose "  Would remove container $(yellow "$cnr")"
             else
                 verbose "  Removing exited container $(red "$cnr")"
-                docker container rm -f "${cnr}"
+                docker container rm --force --volumes "${cnr}"
             fi
         else
             verbose "  Keeping container $(green "$cnr")"
@@ -353,7 +353,7 @@ if echo "$RESOURCES" | grep -qo "volume"; then
                     verbose "  Would remove dangling volume $(yellow "$vol") with less than $MAXFILES file(s)"
                 else
                     verbose "  Removing dangling volume $(red "$vol"), with less than $MAXFILES file(s)"
-                    docker volume rm -f "${vol}"
+                    docker volume rm --force "${vol}"
                 fi
             else
                 verbose "  Keeping dangling volume $(green "$vol") with $files file(s)"
@@ -383,7 +383,7 @@ if echo "$RESOURCES" | grep -qo "image"; then
                 verbose "  Would remove dangling image $(yellow "$img") (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human "$howold")old"
             else
                 verbose "  Removing dangling image $(red "$img") (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human "$howold")old"
-                docker image rm -f "${img}"
+                docker image rm --force "${img}"
             fi
         else
             verbose "  Keeping dangling image $(green "$img"), $(human "$howold")old"
