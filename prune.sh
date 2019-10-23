@@ -146,12 +146,12 @@ blue() {
 # Conditional logging
 verbose() {
     if [ "$VERBOSE" = "1" ]; then
-        echo "[$(blue "$appname")] [$(yellow info)] [$(date +'%Y%m%d-%H%M%S')] $1"
+        echo "[$(blue "$appname")] [$(yellow info)] [$(date +'%Y%m%d-%H%M%S')] $1" >/dev/stderr
     fi
 }
 
 warn() {
-    echo "[$(blue "$appname")] [$(red WARN)] [$(date +'%Y%m%d-%H%M%S')] $1"
+    echo "[$(blue "$appname")] [$(red WARN)] [$(date +'%Y%m%d-%H%M%S')] $1" >/dev/stderr
 }
 
 abort() {
@@ -289,6 +289,29 @@ iso8601() {
     expr "$secs" + \( "$tzdiff" \)
 }
 
+consider() {
+    CONSIDER=0
+    if [ -n "$NAMES" ]; then
+        if echo "$1"|grep -Eqo "$NAMES"; then
+            if [ -z "$EXCLUDE" ]; then
+                verbose "  Considering $2 $1 for removal, matching $NAMES"
+                CONSIDER=1
+            elif [ -n "$EXCLUDE" ] && echo "$1"|grep -Eqov "$EXCLUDE"; then
+                verbose "  Considering $2 $1 for removal, matching $NAMES but not $EXCLUDE"
+                CONSIDER=1
+            else
+                verbose "  Skipping removal of $2 $(green "$1"), matching $NAMES but also matching $EXCLUDE"
+            fi
+        else
+            verbose "  Skipping removal of $2 $(green "$1"), does not match $NAMES"
+        fi
+    else
+        verbose "  Considering $2 $1 for removal"
+        CONSIDER=1
+    fi
+    echo "$CONSIDER"
+}
+
 # Convert period
 if echo "$AGE"|grep -Eq '[0-9]+[[:space:]]*[A-Za-z]+'; then
     NEWAGE=$(howlong "$AGE")
@@ -299,28 +322,15 @@ fi
 if echo "$RESOURCES" | grep -qo "container"; then
     verbose "Cleaning up exited containers..."
     for cnr in $(docker container ls --filter status=exited --format '{{.Names}}'); do
-        CONSIDER=0
-        if [ -n "$NAMES" ] && echo "$cnr"|grep -Eqo "$NAMES"; then
-            if [ -z "$EXCLUDE" ]; then
-                verbose "  Considering exited container $cnr for removal, matching $NAMES"
-                CONSIDER=1
-            elif [ -n "$EXCLUDE" ] && echo "$cnr"|grep -Eqov "$EXCLUDE"; then
-                verbose "  Considering exited container $cnr for removal, matching $NAMES but not $EXCLUDE"
-                CONSIDER=1
+        if [ "$(consider "$cnr" container)" = "1" ]; then
+            if [ "$DRYRUN" = "1" ]; then
+                verbose "  Would remove container $(yellow "$cnr")"
             else
-                verbose "  Skipping removal of container $(green "$cnr"), matching $NAMES but also matching $EXCLUDE"
+                verbose "  Removing exited container $(red "$cnr")"
+                docker container rm -f "${cnr}"
             fi
-
-            if [ "$CONSIDER" = "1" ]; then
-                if [ "$DRYRUN" = "1" ]; then
-                    verbose "  Would remove container $(yellow "$cnr")"
-                else
-                    verbose "  Removing exited container $(red "$cnr")"
-                    docker container rm -f "${cnr}"
-                fi
-            else
-                verbose "  Keeping container $(green "$cnr")"
-            fi
+        else
+            verbose "  Keeping container $(green "$cnr")"
         fi
     done
 fi
@@ -332,16 +342,8 @@ if echo "$RESOURCES" | grep -qo "volume"; then
         if echo "$vol" | grep -Eqo '[0-9a-f]{64}'; then
             CONSIDER=1
             verbose "  Counting files in unnamed, dangling volume: $vol"
-        elif [ -n "$NAMES" ] && echo "$vol"|grep -Eqo "$NAMES"; then
-            if [ -z "$EXCLUDE" ]; then
-                verbose "  Counting files in dangling volume: $vol, matching $NAMES"
-                CONSIDER=1
-            elif [ -n "$EXCLUDE" ] && echo "$vol"|grep -Eqov "$EXCLUDE"; then
-                verbose "  Counting files in dangling volume: $vol, matching $NAMES but not $EXCLUDE"
-                CONSIDER=1
-            else
-                verbose "  Skipping dangling volume: $(green "$vol"), matching $NAMES but also matching $EXCLUDE"
-            fi
+        else
+            CONSIDER=$(consider "$vol" volume)
         fi
 
         if [ "$CONSIDER" = "1" ]; then
