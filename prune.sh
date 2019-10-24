@@ -496,7 +496,7 @@ if echo "$RESOURCES" | grep -qo "image"; then
         sha256=$(docker inspect --format '{{.Id}}' "$img")
         tags=$(docker inspect --format '{{.RepoTags}}' "$img")
         if echo "$in_use" | grep -qo "$sha256"; then
-            verbose "  Keeping orphan image $(green "$img") ($tags), used by existing container"
+            verbose "  Keeping image $(green "$img") ($tags), used by existing container"
         else
             rm_image "$img" "orphan"
         fi
