@@ -14,6 +14,7 @@ EXCLUDE=
 RESOURCES="images volumes containers"
 AGE=6m
 NAMESGEN=https://raw.githubusercontent.com/moby/moby/master/pkg/namesgenerator/names-generator.go
+TIMEOUT="30s"
 if [ -t 1 ]; then
     INTERACTIVE=1
 else
@@ -48,6 +49,10 @@ Usage:
     -a | --age       Age of dangling image to consider it for removal (default:
                      6m). The age can be expressed in human-readable format, e.g.
                      6m (== 6 months), 3 days, etc.
+    -t | --timeout   Timeout to wait for created containers to change status,
+                     they will be considered as stale and removed if status has
+                     not changed. This can be expressed in human-readable format.
+                     Default is 30 seconds.
     --busybox        Docker busybox image tag to be used for volume content
                      collection.
     --namesgen       URL to go implementation for Docker container names
@@ -90,6 +95,11 @@ while [ $# -gt 0 ]; do
         AGE="$2"; shift 2;;
     --age=*)
         AGE="${1#*=}"; shift 1;;
+
+    -t | --timeout)
+        TIMEOUT="$2"; shift 2;;
+    --timeout=*)
+        TIMEOUT="${1#*=}"; shift 1;;
 
     --busybox)
         BUSYBOX="$2"; shift 2;;
@@ -245,10 +255,11 @@ human(){
 
 # Returns the number of seconds since the epoch for the ISO8601 date passed as
 # an argument. This will only recognise a subset of the standard, i.e. dates
-# with milliseconds, microseconds or none specified, and timezone only specified
-# as diffs from UTC, e.g. 2019-09-09T08:40:39.505-07:00 or
-# 2019-09-09T08:40:39.505214+00:00. The implementation actually computes the
-# ms/us whenever they are available, but discards them.
+# with milliseconds, microseconds, nanoseconds or none specified, and timezone
+# only specified as diffs from UTC, e.g. 2019-09-09T08:40:39.505-07:00 or
+# 2019-09-09T08:40:39.505214+00:00. The special Z timezone (i.e. UTC) is also
+# recognised. The implementation actually computes the ms/us/ns whenever they
+# are available, but discards them.
 iso8601() {
     # Arrange for ns to be the number of nanoseconds.
     ds=$(echo "$1"|sed -E 's/([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.([0-9]{3,9}))?([+-]([0-9]{2}):([0-9]{2})|Z)?/\8/')
@@ -297,6 +308,10 @@ iso8601() {
     expr "$secs" + \( "$tzdiff" \)
 }
 
+# Given a name passed as argument, return 0 if it shouldn't be considered for
+# removal, 1 otherwise. This implements the logic behind the --names and
+# --exclude command-line options. The second argument should be the type of the
+# resource to consider for removal and is only used for logging.
 consider() {
     CONSIDER=0
     if [ -n "$NAMES" ]; then
@@ -320,10 +335,73 @@ consider() {
     echo "$CONSIDER"
 }
 
+rm_container() {
+    CONSIDER=0
+    # Try matching the name of the container against the latest list of names
+    # used by Docker to generate good random names.
+    if echo "$1" | grep -Eqo '\w+_\w+'; then
+        if [ -n "$NAMES_DICTIONARY" ]; then
+            left=$(echo "$1" | sed -E 's/(\w+)_(\w+)/\1/')
+            right=$(echo "$1" | sed -E 's/(\w+)_(\w+)/\2/')
+            if echo "$NAMES_DICTIONARY" | grep -qo "$left" && echo "$NAMES_DICTIONARY" | grep -qo "$right"; then
+                verbose "  Container $1 has an automatically generated name considering it for removal"
+                CONSIDER=1
+            fi
+        else
+            verbose "  Container $cnd could be a generated one, but no names dictionary to detect"
+        fi
+    fi
+
+    if [ "$CONSIDER" = "0" ]; then
+        CONSIDER=$(consider "$1" container)
+    fi
+
+    if [ "$CONSIDER" = "1" ]; then
+        if [ "$DRYRUN" = "1" ]; then
+            verbose "  Would remove container $(yellow "$1")"
+        else
+            verbose "  Removing exited container $(red "$1")"
+            docker container rm --force --volumes "${cnr}"
+        fi
+    else
+        verbose "  Keeping container $(green "$1")"
+    fi
+}
+
+rm_image() {
+    now=$(date -u +'%s')
+    # Collect image information for improved logging
+    tags=$(docker image inspect --format '{{.RepoTags}}' "$1"|sed -e 's/^\[//' -e 's/\]$//')
+    digests=$(docker image inspect --format '{{.RepoDigests}}' "$1"|sed -e 's/^\[//' -e 's/\]$//')
+
+    # Compute time from image creation in seconds, old images will be considered
+    # for removal.
+    CONSIDER=0
+    creation=$(docker image inspect --format '{{.Created}}' "$1")
+    howold=$((now-$(iso8601 "$creation")))
+    if [ -z "$tags" ] && [ -z "$digests" ]; then
+        CONSIDER=1
+    elif [ "$howold" -ge "$AGE" ]; then
+        CONSIDER=1
+    fi
+
+    if [ "$CONSIDER" = "1" ]; then
+        if [ "$DRYRUN" = "1" ]; then
+            verbose "  Would remove $2 image $(yellow "$1") (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human "$howold")old"
+        else
+            # Removing an image might fail if it is in use, this is normal.
+            verbose "  Removing $2 image $(red "$1") (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human "$howold")old"
+            docker image rm --force "${img}"
+        fi
+    else
+        verbose "  Keeping $2 image $(green "$1"), $(human "$howold")old"
+    fi
+}
+
 # Convert period
 if echo "$AGE"|grep -Eq '[0-9]+[[:space:]]*[A-Za-z]+'; then
     NEWAGE=$(howlong "$AGE")
-    verbose "Converting human-readable age $AGE to $NEWAGE seconds"
+    verbose "Converted human-readable age $AGE to $NEWAGE seconds"
     AGE=$NEWAGE
 fi
 
@@ -339,40 +417,34 @@ if [ -n "$NAMESGEN" ]; then
     fi
 fi
 
+# Start by cleaning up containers so we can free as many (dependent) resources
+# as possible.
 if echo "$RESOURCES" | grep -qo "container"; then
-    verbose "Cleaning up exited containers..."
+    verbose "Cleaning up exited and dead containers..."
     for cnr in $(docker container ls -a --filter status=exited --filter status=dead --format '{{.Names}}'); do
-        CONSIDER=0
-        # Try matching the name of the container against the latest list of names
-        # used by Docker to generate good random names.
-        if echo "$cnr" | grep -Eqo '\w+_\w+'; then
-            if [ -n "$NAMES_DICTIONARY" ]; then
-                left=$(echo "$cnr" | sed -E 's/(\w+)_(\w+)/\1/')
-                right=$(echo "$cnr" | sed -E 's/(\w+)_(\w+)/\2/')
-                if echo "$NAMES_DICTIONARY" | grep -qo "$left" && echo "$NAMES_DICTIONARY" | grep -qo "$right"; then
-                    verbose "  Container $cnr has an automatically generated considering it for removal"
-                    CONSIDER=1
-                fi
-            else
-                verbose "  Container $cnd could be a generated one, but no names dictionary to detect"
-            fi
-        fi
-
-        if [ "$CONSIDER" = "0" ]; then
-            CONSIDER=$(consider "$cnr" container)
-        fi
-
-        if [ "$CONSIDER" = "1" ]; then
-            if [ "$DRYRUN" = "1" ]; then
-                verbose "  Would remove container $(yellow "$cnr")"
-            else
-                verbose "  Removing exited container $(red "$cnr")"
-                docker container rm --force --volumes "${cnr}"
-            fi
-        else
-            verbose "  Keeping container $(green "$cnr")"
-        fi
+        rm_container "$cnr"
     done
+    created=$(docker container ls -a --filter status=created --format '{{.Names}}')
+    if [ -n "$created" ]; then
+        # Convert human-readable timeout, if necessary.
+        if echo "$TIMEOUT"|grep -Eq '[0-9]+[[:space:]]*[A-Za-z]+'; then
+            NEWTMOUT=$(howlong "$TIMEOUT")
+            verbose "Converted human-readable timeout $TIMEOUT to $NEWTMOUT seconds"
+            TIMEOUT=$NEWTMOUT
+        fi
+        # Wait for timeout seconds and see which containers still are in the
+        # created state. Try remove logic on the ones that remained in the
+        # created state for those timeout seconds.
+        verbose "Cleaning up stale created containers (waiting for $TIMEOUT sec(s))..."
+        sleep "$TIMEOUT"
+        for cnr in $(docker container ls -a --filter status=created --format '{{.Names}}'); do
+            if echo "$created" | grep -qo "$cnr"; then
+                rm_container "$cnr"
+            else
+                verbose "  Skipping container $(green "$cnr"), changed state within the past $TIMEOUT sec(s)"
+            fi
+        done
+    fi
 fi
 
 if echo "$RESOURCES" | grep -qo "volume"; then
@@ -404,35 +476,37 @@ fi
 
 if echo "$RESOURCES" | grep -qo "image"; then
     verbose "Cleaning up dangling images..."
-    now=$(date -u +'%s')
     for img in $(docker image ls -qf dangling=true); do
-        tags=$(docker image inspect --format '{{.RepoTags}}' "$img"|sed -e 's/^\[//' -e 's/\]$//')
-        digests=$(docker image inspect --format '{{.RepoDigests}}' "$img"|sed -e 's/^\[//' -e 's/\]$//')
+        rm_image "$img" "dangling"
+    done
 
-        CONSIDER=0
-        creation=$(docker image inspect --format '{{.Created}}' "$img")
-        howold=$((now-$(iso8601 "$creation")))
-        if [ -z "$tags" ] && [ -z "$digests" ]; then
-            CONSIDER=1
-        elif [ "$howold" -ge "$AGE" ]; then
-            CONSIDER=1
-        fi
-
-        if [ "$CONSIDER" = "1" ]; then
-            if [ "$DRYRUN" = "1" ]; then
-                verbose "  Would remove dangling image $(yellow "$img") (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human "$howold")old"
-            else
-                verbose "  Removing dangling image $(red "$img") (from $(echo "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(human "$howold")old"
-                docker image rm --force "${img}"
-            fi
+    verbose "Cleaning up orphan images..."
+    # Get SHA256 of image used by all existing containers. This isn't the same
+    # as docker container ls -aq --format {{.Image}} as this command omits the
+    # tag and tries to resolve to names. We want the SHA256 to guarantee
+    # uniqueness.
+    verbose "  Collecting images used by existing containers (whichever status), this may take time..."
+    in_use=""
+    for cnr in $(docker container ls -aq); do
+        img=$(docker container inspect --format '{{.Image}}' "$cnr")
+        in_use="${img} $in_use"
+    done
+    # Try remove logic on all images that are not in use in any container.
+    for img in $(docker image ls -q); do
+        sha256=$(docker inspect --format '{{.Id}}' "$img")
+        tags=$(docker inspect --format '{{.RepoTags}}' "$img")
+        if echo "$in_use" | grep -qo "$sha256"; then
+            verbose "  Keeping orphan image $(green "$img") ($tags), used by existing container"
         else
-            verbose "  Keeping dangling image $(green "$img"), $(human "$howold")old"
+            rm_image "$img" "orphan"
         fi
     done
 fi
 
-verbose "Done cleaning: $RESOURCES"
+[ -n "$RESOURCES" ] && verbose "Done cleaning: $RESOURCES"
 
+
+# Execute remaining arguments as a command, if any
 if [ $# -ne "0" ]; then
     verbose "Executing $*"
     exec "$@"
