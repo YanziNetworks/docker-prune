@@ -115,6 +115,14 @@ Time to wait for created containers to not change state before they are deemed
 stale and considered for removal. This can be expressed in human-readable format
 similarly to `--age`, and defaults to `30s`.
 
+### `--intermediate`
+
+When given, this flag will consider intermediate images for removal. As these
+images are usually the result of calls to `docker build`, they do not carry any
+tags. This means that even recent intermediate images will be removed, leading
+to removal of cached build data. This may not be what you would expect and
+exists, consequently as a flag that needs to be explicitely turned on.
+
 ### `--busybox`
 
 Docker busybox image tag to be used for volume content collection. You shouldn't

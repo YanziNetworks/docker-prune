@@ -15,6 +15,7 @@ RESOURCES="images volumes containers"
 AGE=6m
 NAMESGEN=https://raw.githubusercontent.com/moby/moby/master/pkg/namesgenerator/names-generator.go
 TIMEOUT="30s"
+INTERMEDIATE=0
 if [ -t 1 ]; then
     INTERACTIVE=1
 else
@@ -108,6 +109,9 @@ while [ $# -gt 0 ]; do
 
     --dry-run | --dryrun)
         DRYRUN=1; shift 1;;
+
+    --intermediate)
+        INTERMEDIATE=1; shift 1;;
 
     --names-gen | --names-generator | --namesgen)
         NAMESGEN="$2"; shift 2;;
@@ -488,11 +492,21 @@ if echo "$RESOURCES" | grep -qo "image"; then
     verbose "  Collecting images used by existing containers (whichever status), this may take time..."
     in_use=""
     for cnr in $(docker container ls -aq); do
+        nm=$(docker container inspect --format '{{.Name}}' "$cnr")
+        verbose "    Collecting images and dependencies for container $nm ($cnr)"
         img=$(docker container inspect --format '{{.Image}}' "$cnr")
-        in_use="${img} $in_use"
+        in_use=$(printf -- "%s\n%s" "$in_use" "$img")
+        for dep in $(docker image history -q --no-trunc "$img" | grep -v 'missing'); do
+            [ "$img" != "$dep" ] && in_use=$(printf -- "%s\n\t%s" "$in_use" "$dep")
+        done
     done
     # Try remove logic on all images that are not in use in any container.
-    for img in $(docker image ls -q); do
+    if [ "$INTERMEDIATE" = "0" ]; then
+        images=$(docker image ls -q)
+    else
+        images=$(docker image ls -qa)
+    fi
+    for img in $images; do
         sha256=$(docker inspect --format '{{.Id}}' "$img")
         tags=$(docker inspect --format '{{.RepoTags}}' "$img")
         if echo "$in_use" | grep -qo "$sha256"; then
