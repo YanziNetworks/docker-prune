@@ -4,9 +4,14 @@ This script is a conservative alternative to [`docker system prune`][prune]. It
 is tuned for automatic cleanup, but can be used directly from the command-line.
 In this case, you should probably first run it with the option `--dry-run` in
 order to assess what will be removed. The script also comes as Docker [image].
+The script depends on [yu.sh], which is made explicit through a git [submodule].
+You probably want to use the `--recurse-submodules` flag when running `clone`
+the first time.
 
   [prune]: https://docs.docker.com/engine/reference/commandline/system_prune/
-  [image]: https://hub.docker.com/r/yanzinetworks/prune  
+  [image]: https://hub.docker.com/r/yanzinetworks/prune
+  [yu.sh]: https://github.com/YanziNetworks/yu.sh
+  [submodule]: https://git-scm.com/book/en/v2/Git-Tools-Submodules
 
 ## Removal Decisions
 
@@ -145,3 +150,21 @@ container, you will have to pass the Docker socket to the container, e.g.
 ```shell
 docker run -it --rm -v /var/run/docker.sock:/var/run/docker.sock:ro yanzinetworks/prune --help
 ```
+
+## Examples
+
+### GitLab Runners
+
+GitLab [runners] might leave Docker containers behind. To conservatively clean
+possible remainings from your CI/CD pipelines, you could run the following
+command. You probably want to add the `--dry-run` flag the first time in order
+to double check what the command would do...
+
+```shell
+./prune.sh \
+    --verbose debug \
+    --names '^runner-[[:alnum:]]+-project-[0-9]+-.*' \
+    --age 2d
+```
+
+  [runners]: https://docs.gitlab.com/runner/
