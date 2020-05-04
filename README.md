@@ -29,8 +29,14 @@ use the `--names` and `--exclude` command-line options to consider only a subset
 of the containers.
 
 Exited and dead containers are as reported by Docker. Stale containers are
-containers that are created but hasn't moved to any other state after a given
+containers that are created but have not moved to any other state after a given
 timeout.
+
+In addition, it is possible to forcedly remove ancient, but still running
+containers using the `--ancient` option. This might be a dangerous operation,
+and it is turned off by default.
+
+  [cprune]: https://docs.docker.com/engine/reference/commandline/container_prune/
 
 ### Images
 
@@ -43,6 +49,8 @@ Dangling images are layers that have no relationship to any tagged images.
 Orphan images are images that are not used by any container, whichever state the
 container is in (including created or exited state).
 
+  [iprune]: https://docs.docker.com/engine/reference/commandline/image_prune/
+
 ### Volumes
 
 All "empty" dangling volumes will be removed. The script will count the files
@@ -53,8 +61,6 @@ volumes. Volumes that have a name that was automatically generated are
 automatically selected. File count is achieved through mounting the volumes into
 a temporary [busybox] container.
 
-  [cprune]: https://docs.docker.com/engine/reference/commandline/container_prune/
-  [iprune]: https://docs.docker.com/engine/reference/commandline/image_prune/
   [busybox]: https://hub.docker.com/_/busybox
 
 ## Command-Line Options
@@ -70,10 +76,17 @@ dash, `--`.
 
 ### `-v` or `--verbose`
 
-This will increase the verbosity of the script, output will be sent to the
-`stderr` and lines will contain the name of the script, together with the
-timestamp. When used in interactive mode, the script will automatically colour
-the log.
+This will select the verbosity of the script (default: `info`), output will be
+sent to the `stderr` and lines will contain the name of the script, together
+with the timestamp. When used in interactive mode, the script will automatically
+colour the log. Available levels are: `error`, `warn`, `notice`, `info`,
+`debug`.
+
+### `--non-interactive`, `--no-colour` or `--no-color`
+
+Forcedly remove colouring from logs. Otherwise, logs will be coloured in
+interactive mode, but kept without colouring when invoked within pipes or
+without a (pseudo-)tty.
 
 ### `-h` or `--help`
 
@@ -83,7 +96,7 @@ Print out help and exit.
 
 Just print out what would be perform, do not remove anything at all. This option
 can be used to assess what the script would do when experimenting with options
-such as `--names`, `--exclude` or `--age`.
+such as `--names`, `--exclude`, `--age` or `--ancient`.
 
 ### `-r` or `--resources`
 
@@ -112,7 +125,17 @@ that should be kept.
 ### `-a` or `--age`
 
 Age of dangling images to consider for removal (default: `6m`). The age can be
-expressed in human-readable format, e.g. `6m` (for 6 months), `3 days`, etc.
+expressed in human-readable format, e.g. `6m` (for 6 months), `3 days`, etc. Set
+this to an empty string to skip removal of named dangling images totally.
+
+### `--ancient`
+
+Age of running containers to consider for removal (default: empty). The age can
+be expressed in human-readable format, e.g. `6m` (for 6 months), `3 days`, etc.
+Unnamed containers or containers that match the `--names` and `--exclude` filter
+and exclusion will be forced removed. This operation cannot be undone! The
+default is an empty sting, in which case no running container will ever be
+stopped and removed.
 
 ### `-t` or `--timeout`
 
@@ -142,6 +165,21 @@ parsed at run-time to detect if containers are "unnamed" containers.
   [source]: https://raw.githubusercontent.com/moby/moby/master/pkg/namesgenerator/names-generator.go
   [golang]: https://golang.org/
 
+## Environment Variables
+
+This script also recognises a number of environment variables, these can be used
+instead of (some of) the command-line options. Command-line options always have
+precedence over the environment variables. Recognised variables are:
+
+- `BUSYBOX`: same as `--busybox`
+- `MAXFILES`: same as `--limit`
+- `NAMES`: same as `--names`
+- `EXCLUDE`: same as `--exclude`
+- `RESOURCES`: same as `--resources`
+- `AGE`: same as `--age`
+- `ANCIENT`: same as `--ancient`
+- `TIMEOUT`: same as `--timeout`
+
 ## Docker
 
 This script also comes as a Docker [image]. To be able to run it from a
@@ -163,7 +201,7 @@ to double check what the command would do...
 ```shell
 ./prune.sh \
     --verbose debug \
-    --names '^runner-[[:alnum:]]+-project-[0-9]+-.*' \
+    --names '^runner-[[:alnum:]_]+-project-[0-9]+-.*' \
     --age 2d
 ```
 

@@ -35,6 +35,7 @@ NAMES=${NAMES:-}
 EXCLUDE=${EXCLUDE:-}
 RESOURCES=${RESOURCES:-"images volumes containers"}
 AGE=${AGE:-"6m"}
+ANCIENT=${ANCIENT:-}
 NAMESGEN=https://raw.githubusercontent.com/moby/moby/master/pkg/namesgenerator/names-generator.go
 TIMEOUT=${TIMEOUT:-"30s"}
 INTERMEDIATE=0
@@ -66,12 +67,15 @@ Usage:
     -x | --exclude   Regular expression to exclude from names selected above,
                      this eases selecting away important containers/volumes.
     -a | --age       Age of dangling image to consider it for removal (default:
-                     6m). The age can be expressed in yush_human_period-readable format, e.g.
-                     6m (== 6 months), 3 days, etc.
+                     6m). The age can be expressed in yush_human_period-readable
+                     format, e.g. 6m (== 6 months), 3 days, etc.
+    --ancient        Age of ancient container. Matching or unnamed containers
+                     at least this old will be forced removed. Default is empty,
+                     no removal at all!
     -t | --timeout   Timeout to wait for created containers to change status,
-                     they will be consideyush_red as stale and removed if status has
-                     not changed. This can be expressed in yush_human_period-readable format.
-                     Default is 30 seconds.
+                     they will be consideyush_red as stale and removed if status
+                     has not changed. This can be expressed in human-readable
+                     format. Default is 30 seconds, e.g. 30s.
     --busybox        Docker busybox image tag to be used for volume content
                      collection.
     --namesgen       URL to go implementation for Docker container names
@@ -113,6 +117,11 @@ while [ $# -gt 0 ]; do
             AGE="$2"; shift 2;;
         --age=*)
             AGE="${1#*=}"; shift 1;;
+
+        --ancient)
+            ANCIENT="$2"; shift 2;;
+        --ancient=*)
+            ANCIENT="${1#*=}"; shift 1;;
 
         -t | --timeout)
             TIMEOUT="$2"; shift 2;;
@@ -234,10 +243,10 @@ rm_image() {
     # for removal.
     CONSIDER=0
     creation=$(docker image inspect --format '{{.Created}}' "$1")
-    howold=$((now-$(yush_iso8601 "$creation")))
+    howold=$(( now - $(yush_iso8601 "$creation") ))
     if [ -z "$tags" ] && [ -z "$digests" ]; then
         CONSIDER=1
-    elif [ "$howold" -ge "$AGE" ]; then
+    elif [ -n "$AGE" ] && [ "$howold" -ge "$AGE" ]; then
         CONSIDER=1
     fi
 
@@ -254,12 +263,23 @@ rm_image() {
     fi
 }
 
-# Convert period
-if printf %s\\n "$AGE"|grep -Eq '[0-9]+[[:space:]]*[A-Za-z]+'; then
-    NEWAGE=$(yush_howlong "$AGE")
-    yush_debug "Converted yush_human_period-readable age $AGE to $NEWAGE seconds"
-    AGE=$NEWAGE
-fi
+to_seconds() {
+    if [ -n "$1" ]; then
+        if printf %s\\n "$1"|grep -Eq '[0-9]+[[:space:]]*[A-Za-z]+'; then
+            NEWAGE=$(yush_howlong "$1")
+            if [ -n "$NEWAGE" ]; then
+                yush_debug "Converted human-readable age $1 to $NEWAGE seconds"
+                printf %d\\n "$NEWAGE"
+            else
+                abort "Could not convert human-readable $1 to a period!"
+            fi
+        fi
+    fi
+}
+
+# Convert human-readable periods
+AGE=$(to_seconds "$AGE")
+ANCIENT=$(to_seconds "$ANCIENT")
 
 NAMES_DICTIONARY=
 if [ -n "$NAMESGEN" ]; then
@@ -276,7 +296,7 @@ fi
 # Start by cleaning up containers so we can free as many (dependent) resources
 # as possible.
 if printf %s\\n "$RESOURCES" | grep -qo "container"; then
-    yush_notice "Cleaning up exited and dead containers..."
+    yush_notice "Cleaning up exited, dead and ancient containers..."
     for cnr in $(docker container ls -a --filter status=exited --filter status=dead --format '{{.Names}}'); do
         rm_container "$cnr"
     done
@@ -298,6 +318,21 @@ if printf %s\\n "$RESOURCES" | grep -qo "container"; then
                 rm_container "$cnr"
             else
                 yush_debug "Skipping container $(yush_green "$cnr"), changed state within the past $TIMEOUT sec(s)"
+            fi
+        done
+    fi
+
+    if [ -n "$ANCIENT" ]; then
+        now=$(date -u +'%s')
+        for cnr in $(docker container ls --filter status=running --format '{{.Names}}'); do
+            started=$(docker container inspect --format '{{.State.StartedAt}}' "$cnr")
+            started_secs=$(yush_iso8601 "$started")
+            howold=$(( now - started_secs ))
+            if [ "$howold" -gt "$ANCIENT" ]; then
+                yush_info "Container $cnr is $(yush_human_period "$howold")ancient"
+                rm_container "$cnr"
+            else
+                yush_debug "Container $cnr is still young"
             fi
         done
     fi

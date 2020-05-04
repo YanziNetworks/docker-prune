@@ -20,6 +20,7 @@ ENV NAMES=
 ENV EXCLUDE=
 ENV RESOURCES=
 ENV AGE=
+ENV ANCIENT=
 ENV TIMEOUT=
 
 # Add dependency and main script
