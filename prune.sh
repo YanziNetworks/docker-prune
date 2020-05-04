@@ -225,8 +225,9 @@ rm_container() {
         if [ "$DRYRUN" = "1" ]; then
             yush_info "Would remove container $(yush_yellow "$1")"
         else
+            # Try removing, let Docker decide upon the final result
             yush_notice "Removing exited container $(yush_red "$1")"
-            docker container rm --force --volumes "$1"
+            docker container rm --force --volumes "$1" || true
         fi
     else
         yush_debug "Keeping container $(yush_green "$1")"
@@ -256,7 +257,8 @@ rm_image() {
         else
             # Removing an image might fail if it is in use, this is normal.
             yush_notice "Removing $2 image $(yush_red "$1") (from $(printf %s\\n "$digests" | sed -E -e 's/@sha256:[0-9a-f]{64}//g')), $(yush_human_period "$howold")old"
-            docker image rm --force "$1"
+            # Try removing, let Docker decide upon the final result
+            docker image rm --force "$1" || true
         fi
     else
         yush_debug "Keeping $2 image $(yush_green "$1"), $(yush_human_period "$howold")old"
@@ -355,8 +357,9 @@ if printf %s\\n "$RESOURCES" | grep -qo "volume"; then
                 if [ "$DRYRUN" = "1" ]; then
                     yush_info "Would remove dangling volume $(yush_yellow "$vol") with less than $MAXFILES file(s)"
                 else
+                    # Try removing, let Docker decide upon the final result
                     yush_notice "Removing dangling volume $(yush_red "$vol"), with less than $MAXFILES file(s)"
-                    docker volume rm --force "${vol}"
+                    docker volume rm --force "${vol}" || true
                 fi
             else
                 yush_info "Keeping dangling volume $(yush_green "$vol") with $files file(s)"
